@@ -1,5 +1,6 @@
 package data;
 
+import lombok.Data;
 import lombok.Value;
 
 public class DataHelper {
@@ -7,8 +8,8 @@ public class DataHelper {
 
     @Value
     public static class AuthInfo {
-        private String login;
-        private String password;
+        String login;
+        String password;
     }
 
     public static AuthInfo getAuthInfo() {
@@ -17,22 +18,25 @@ public class DataHelper {
 
     @Value
     public static class VerificationCode {
-        private String login;
-        private String code;
+        String login;
+        String code;
     }
 
-    public static VerificationCode getVerificationCode(AuthInfo authInfo, String code) {
-        return new VerificationCode(authInfo.getLogin(), code);
+    public static VerificationCode getVerificationCode(String login) {
+        return new VerificationCode(login, SQLHelper.getVerificationCodeByLogin(login));
     }
 
     @Value
     public static class Transfer {
-        private String from;
-        private String to;
-        private int amount;
+        String from;
+        String to;
+        int amount;
     }
 
-    public static Transfer getTransfer(String from, String to, int amount) {
-        return new Transfer(from, to, amount);
+    @Data
+    public static class Card {
+        String id;
+        String number;
+        String balance;
     }
 }

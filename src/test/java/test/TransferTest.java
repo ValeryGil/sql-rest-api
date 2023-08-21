@@ -1,104 +1,106 @@
 package test;
 
-import data.Card;
 import data.DataHelper;
-import io.restassured.builder.RequestSpecBuilder;
-import io.restassured.filter.log.LogDetail;
-import io.restassured.http.ContentType;
-import io.restassured.specification.RequestSpecification;
-import lombok.val;
-import org.apache.commons.dbutils.QueryRunner;
-import org.apache.commons.dbutils.handlers.ScalarHandler;
+
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.sql.DriverManager;
-import java.sql.SQLException;
-
-import static io.restassured.RestAssured.given;
+import static data.APIHelper.*;
+import static data.SQLHelper.*;
 
 public class TransferTest {
-    private static RequestSpecification requestSpec = new RequestSpecBuilder()
-            .setBaseUri("http://localhost")
-            .setPort(9999)
-            .setAccept(ContentType.JSON)
-            .setContentType(ContentType.JSON)
-            .log(LogDetail.ALL)
-            .build();
+    DataHelper.AuthInfo authInfo;
+    DataHelper.Card[] cards;
+    int indexFirstCard;
+    int indexSecondCard;
     int firstCardBalance;
     int secondCardBalance;
-    int amount = 5_000;
+    String token;
+
+    @BeforeEach
+    public void setUp() {
+        reloadVerificationCode();
+        authInfo = DataHelper.getAuthInfo();
+        authorization(authInfo);
+        var verifyData = DataHelper.getVerificationCode(authInfo.getLogin());
+        token = verification(verifyData);
+        cards = getCards(token);
+        int i = 0;
+        for (DataHelper.Card card : cards) {
+            card.setNumber(getCardNumberById(card.getId()));
+            i++;
+        }
+    }
+
+    @AfterEach
+    public void returnBalance() {
+        reloadBalanceCards(cards[indexFirstCard].getId(), firstCardBalance);
+        reloadBalanceCards(cards[indexSecondCard].getId(), secondCardBalance);
+    }
 
     @Test
-    public void shouldTransfer() throws SQLException {
-        given()
-                .spec(requestSpec)
-                .body(DataHelper.getAuthInfo())
-                .when()
-                .post("/api/auth")
-                .then()
-                .statusCode(200);
+    public void shouldTransfer() {
+        indexFirstCard = 0;
+        indexSecondCard = 1;
+        int amount = 5_000;
+        firstCardBalance = Integer.parseInt(cards[indexFirstCard].getBalance());
+        secondCardBalance = Integer.parseInt(cards[indexSecondCard].getBalance());
 
-        val codeSQL = "SELECT code FROM auth_codes WHERE created = (SELECT max(created) FROM auth_codes);";
-        val runner = new QueryRunner();
+        var transfer = new DataHelper.Transfer(cards[indexFirstCard].getNumber(),
+                cards[indexSecondCard].getNumber(), amount);
+        transferMoney(transfer, token);
 
-        try (val connection = DriverManager.getConnection("jdbc:mysql://localhost:3306/app", "app", "pass")) {
-            val code = runner.query(connection, codeSQL, new ScalarHandler<String>());
-            System.out.println(code);
+        Assertions.assertEquals(firstCardBalance - amount, getBalanceById(cards[indexFirstCard].getId()));
+        Assertions.assertEquals(secondCardBalance + amount, getBalanceById(cards[indexSecondCard].getId()));
+    }
 
-            String token =
-                    given()
-                            .spec(requestSpec)
-                            .body(DataHelper.getVerificationCode(DataHelper.getAuthInfo(), code))
-                            .when()
-                            .post("/api/auth/verification")
-                            .then()
-                            .statusCode(200)
-                            .extract()
-                            .path("token");
-            System.out.println(token);
+    @Test
+    public void shouldTransferNegativeAmount() {
+        indexFirstCard = 0;
+        indexSecondCard = 1;
+        int amount = -1_000;
+        firstCardBalance = Integer.parseInt(cards[indexFirstCard].getBalance());
+        secondCardBalance = Integer.parseInt(cards[indexSecondCard].getBalance());
 
-            Card[] cardsOne =
-                    given()
-                            .spec(requestSpec)
-                            .header("Authorization", "Bearer" + token)
-                            .when()
-                            .get("/api/cards")
-                            .then()
-                            .statusCode(200)
-                            .extract()
-                            .as(Card[].class);
-            System.out.println(cardsOne[0].getBalance());
-            System.out.println(cardsOne[1].getBalance());
-            firstCardBalance = Integer.parseInt(cardsOne[0].getBalance());
-            secondCardBalance = Integer.parseInt(cardsOne[1].getBalance());
+        var transfer = new DataHelper.Transfer(cards[indexFirstCard].getNumber(),
+                cards[indexSecondCard].getNumber(), amount);
+        transferMoney(transfer, token);
 
-            given()
-                    .spec(requestSpec)
-                    .header("Authorization", "Bearer" + token)
-                    .body(DataHelper.getTransfer("5559 0000 0000 0001", "5559 0000 0000 0002", amount))
-                    .when()
-                    .post("/api/transfer")
-                    .then()
-                    .statusCode(200);
+        Assertions.assertEquals(firstCardBalance, getBalanceById(cards[indexFirstCard].getId()));
+        Assertions.assertEquals(secondCardBalance, getBalanceById(cards[indexSecondCard].getId()));
+    }
 
-            Card[] cardsTwo =
-                    given()
-                            .spec(requestSpec)
-                            .header("Authorization", "Bearer" + token)
-                            .when()
-                            .get("/api/cards")
-                            .then()
-                            .statusCode(200)
-                            .extract()
-                            .as(Card[].class);
-            System.out.println(cardsTwo[0].getBalance());
-            System.out.println(cardsTwo[1].getBalance());
-            firstCardBalance = Integer.parseInt(cardsTwo[0].getBalance());
-            secondCardBalance = Integer.parseInt(cardsTwo[1].getBalance());
+    @Test
+    public void shouldTransferZeroAmount() {
+        indexFirstCard = 0;
+        indexSecondCard = 1;
+        int amount = 0;
+        firstCardBalance = Integer.parseInt(cards[indexFirstCard].getBalance());
+        secondCardBalance = Integer.parseInt(cards[indexSecondCard].getBalance());
 
-            Assertions.assertEquals(firstCardBalance - amount, secondCardBalance);
-            Assertions.assertEquals(secondCardBalance + amount, firstCardBalance);
-        }
+        var transfer = new DataHelper.Transfer(cards[indexFirstCard].getNumber(),
+                cards[indexSecondCard].getNumber(), amount);
+        transferMoney(transfer, token);
+
+        Assertions.assertEquals(firstCardBalance, getBalanceById(cards[indexFirstCard].getId()));
+        Assertions.assertEquals(secondCardBalance, getBalanceById(cards[indexSecondCard].getId()));
+    }
+
+    @Test
+    public void shouldTransferAmountMoreThanBalance() {
+        indexFirstCard = 0;
+        indexSecondCard = 1;
+        int amount = 11_000;
+        firstCardBalance = Integer.parseInt(cards[indexFirstCard].getBalance());
+        secondCardBalance = Integer.parseInt(cards[secondCardBalance].getBalance());
+
+        var transfer = new DataHelper.Transfer(cards[indexFirstCard].getNumber(),
+                cards[indexSecondCard].getNumber(), amount);
+        transferMoney(transfer, token);
+
+        Assertions.assertEquals(firstCardBalance, getBalanceById(cards[indexFirstCard].getId()));
+        Assertions.assertEquals(secondCardBalance, getBalanceById(cards[indexSecondCard].getId()));
     }
 }
